@@ -205,6 +205,129 @@ npm run server
 
 ---
 
+## 🤖 Google Colab AI Backend (Required)
+
+> [!IMPORTANT]
+> The AI Legal Assistant feature requires running the AI model on Google Colab. Without this, AI responses will not work.
+
+The application uses **DeepSeek-R1-Distill-Qwen-7B** model running on Google Colab with Cloudflare tunnel for API access.
+
+### Setup Instructions
+
+1. **Open Google Colab** - Go to [Google Colab](https://colab.research.google.com/)
+
+2. **Create a new notebook** and run the following cells:
+
+   **Cell 1: Install Dependencies**
+   ```python
+   !pip install -q transformers accelerate bitsandbytes flask peft datasets
+   !wget https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+   !dpkg -i cloudflared-linux-amd64.deb
+   ```
+
+   **Cell 2: Load the Model**
+   ```python
+   from transformers import AutoModelForCausalLM, AutoTokenizer, BitsAndBytesConfig, pipeline
+   import torch
+
+   MODEL_NAME = "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B"
+
+   tokenizer = AutoTokenizer.from_pretrained(MODEL_NAME)
+
+   bnb_config = BitsAndBytesConfig(
+       load_in_4bit=True,
+       bnb_4bit_use_double_quant=True,
+       bnb_4bit_quant_type="nf4",
+       bnb_4bit_compute_dtype=torch.float16
+   )
+
+   model = AutoModelForCausalLM.from_pretrained(
+       MODEL_NAME,
+       quantization_config=bnb_config,
+       device_map="auto"
+   )
+   ```
+
+   **Cell 3: Start Flask Server**
+   ```python
+   from flask import Flask, request, jsonify
+   import threading
+
+   app = Flask(__name__)
+
+   chat_pipeline = pipeline(
+       "text-generation",
+       model=model,
+       tokenizer=tokenizer,
+       max_new_tokens=300,
+       temperature=0.7,
+       top_p=0.9
+   )
+
+   @app.route('/predict', methods=['POST'])
+   def predict():
+       data = request.get_json()
+       message = data.get('message', '').strip()
+       if not message:
+           return jsonify({'response': "Please provide a valid message."})
+
+       prompt = f"You are an AI legal assistant. Answer clearly and factually.\nUser: {message}\nAI:"
+       result = chat_pipeline(prompt)[0]["generated_text"]
+       ai_reply = result.split("AI:")[-1].strip()
+       return jsonify({'response': ai_reply})
+
+   @app.route('/summarize', methods=['POST'])
+   def summarize():
+       data = request.get_json()
+       document = data.get('document', '').strip()
+
+       if not document:
+           return jsonify({'error': "Please provide a valid document."}), 400
+
+       prompt = f"""
+       You are a legal AI assistant. Summarize this document clearly and concisely in under 300 words.
+       Document:
+       {document}
+       Response:
+       """
+
+       try:
+           result = chat_pipeline(prompt)[0]["generated_text"]
+           if "Response:" in result:
+               result = result.split("Response:")[-1].strip()
+           return jsonify({'summary': result.strip()})
+       except Exception as e:
+           return jsonify({'error': f"Error generating summary: {str(e)}"}), 500
+
+   def run_flask():
+       app.run(host='0.0.0.0', port=7000)
+
+   threading.Thread(target=run_flask).start()
+   ```
+
+   **Cell 4: Start Cloudflare Tunnel**
+   ```bash
+   !cloudflared tunnel --url http://localhost:7000
+   ```
+
+3. **Copy the Cloudflare URL** - After running the last cell, you'll get a public URL like `https://xxx-xxx-xxx.trycloudflare.com`
+
+4. **Update your `.env` file** with the Colab URL:
+   ```env
+   COLAB_API_URL=https://your-cloudflare-url.trycloudflare.com
+   ```
+
+### AI Endpoints (Colab)
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| POST | `/predict` | Get AI response for legal queries |
+| POST | `/summarize` | Summarize legal documents |
+
+> [!NOTE]
+> The complete Colab code is available in [`collab/collab.txt`](collab/collab.txt)
+
+---
+
 ## 📡 API Endpoints
 
 ### Authentication
